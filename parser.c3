@@ -2,14 +2,15 @@ module xml;
 
 import std::io;
 import std::core;
+import std::core::dstring;
 import std::math;
 import std::collections::list;
 import std::collections::map;
 import std::ascii;
 
-def Attribute = HashMap(<String, String>);
-def NodePointers = List(<Node*>);
-def NodeList = List(<Node>);
+alias Attribute = HashMap{String, String};
+alias NodePointers = List{Node*};
+alias NodeList = List{Node};
 
 struct Node {
 	String name;
@@ -29,12 +30,7 @@ struct Parser {
 	usz line;
 }
 
-fault XMLParserError
-{
-	EOF,
-	UNEXPECTED_CHARACTER,
-	FILE_NOT_FOUND
-}
+faultdef EOF, UNEXPECTED_CHARACTER, FILE_NOT_FOUND;
 
 enum XMLToken @local
 {
@@ -46,15 +42,15 @@ enum XMLToken @local
 	HEADER,
 }
 
-def NodeSearch = fn bool (Node);
-def ParserSearch = fn bool (char value);
+alias NodeSearch = fn bool (Node);
+alias ParserSearch = fn bool (char value);
 
 fn void Node.find(self, NodeSearch search_fn, NodeList* cache) {
 	if (search_fn(self)) cache.push(self);
 	foreach (child: self.children) child.find(search_fn, cache);
 }
 
-fn void! Parser.advance(&self)
+fn void? Parser.advance(&self)
 {
 	char c;
 	while WS: (c = self.stream.read_byte()!)
@@ -127,13 +123,13 @@ fn void! Parser.advance(&self)
 		}
 		default:
 			io::printfn("not found char %c", c);
-			return XMLParserError.UNEXPECTED_CHARACTER?;
+			return UNEXPECTED_CHARACTER?;
 	}
 }
 
 
 
-fn usz! Parser.seek(&self, ParserSearch search, uint skip = 0, bool return_pos = false)
+fn usz? Parser.seek(&self, ParserSearch search, uint skip = 0, bool return_pos = false)
 {
 	usz offset;
 	uint skipped = 0;
@@ -154,7 +150,7 @@ fn usz! Parser.seek(&self, ParserSearch search, uint skip = 0, bool return_pos =
 	return offset;
 }
 
-fn bool! Parser.peek(&self, ParserSearch search)
+fn bool? Parser.peek(&self, ParserSearch search)
 {
 	bool response = search(self.stream.read_byte()!);
 	// Set stream back to start pos
@@ -163,24 +159,24 @@ fn bool! Parser.peek(&self, ParserSearch search)
 }
 
 
-fn Node! parse_string(String s, Allocator allocator = allocator::heap()) => parse(ByteReader{}.init(s), allocator);
-fn Node! load_file (String path, Allocator allocator = allocator::heap()) {
-    File! file = file::open(path, "r");
+fn Node? parse_string(String s, Allocator allocator = allocator::heap()) => parse((ByteReader){}.init(s), allocator);
+fn Node? load_file (String path, Allocator allocator = allocator::heap()) {
+    File? file = file::open(path, "r");
     defer file.close()!!;
 
     if (catch err = file) {
         io::printfn("Failed to find the xml file");
-        return XMLParserError.FILE_NOT_FOUND?;
+        return FILE_NOT_FOUND?;
     }
 
     return parse(&file, allocator);
 }
 
 
-fn Node! parse(InStream s, Allocator allocator = allocator::heap())
+fn Node? parse(InStream s, Allocator allocator = allocator::heap())
 {
 	Node root_node;
-	Parser parser = { .buffer = dstring::new_with_capacity(2024), .stream = s, .allocator = allocator, .active_node = &root_node};
+	Parser parser = { .buffer = dstring::new_with_capacity(allocator,2024), .stream = s, .allocator = allocator, .active_node = &root_node};
 	defer parser.free();
 
 	while (try parser.advance()) {
@@ -188,13 +184,13 @@ fn Node! parse(InStream s, Allocator allocator = allocator::heap())
 				case START_TAG: {
 					if (parser.open_nodes.len() == 0) {
 						// Root node
-						parser.active_node.name = parser.buffer.copy_str();
+						parser.active_node.name = parser.buffer.copy_str(allocator);
 					} else {
 						// Push node as child
 						Node* parent_node = parser.open_nodes[parser.open_nodes.len() - 1];
 
-						parent_node.children.push(Node {
-							.name = parser.buffer.copy_str()
+						parent_node.children.push((Node) {
+							.name = parser.buffer.copy_str(allocator)
 						});
 					
 						parser.active_node = &parent_node.children[parent_node.children.len() - 1];
@@ -209,7 +205,7 @@ fn Node! parse(InStream s, Allocator allocator = allocator::heap())
 				case VALUE: {
 					if (parser.open_nodes.len() - 1 > 0) {
 						Node* node = parser.open_nodes[parser.open_nodes.len() - 1];
-						node.value = parser.buffer.copy_str();
+						node.value = parser.buffer.copy_str(allocator);
 					}
 					parser.buffer.clear();
 				}
@@ -219,11 +215,11 @@ fn Node! parse(InStream s, Allocator allocator = allocator::heap())
 					bool empty_value = (data.len - split_index) <= 3;
 
 					// Add attribute to hashmap
-					parser.active_node.attributes.set(data[0..split_index - 1].copy(), empty_value ? "" : data[split_index + 2..parser.buffer.len() - 2].copy());
+					parser.active_node.attributes.set(data[0..split_index - 1].copy(allocator), empty_value ? "" : data[split_index + 2..parser.buffer.len() - 2].copy(allocator));
 					parser.buffer.clear();
 				}
 				case HEADER: {
-					parser.active_node.header = parser.buffer.copy_str();
+					parser.active_node.header = parser.buffer.copy_str(allocator);
 					parser.buffer.clear();
 				}
 				default: {
@@ -242,13 +238,13 @@ fn void Parser.free(&self)
 	self.open_nodes.free();
 }
 
-fn void Node.free(&self)
+fn void Node.free(&self,Allocator allocator = allocator::heap())
 {
 	foreach (child: self.children) child.free();
 	self.attributes.free();
 	self.children.free();
-	self.name.free();
-	self.value.free();
-	self.header.free();
+	self.name.free(allocator);
+	self.value.free(allocator);
+	self.header.free(allocator);
 }
 
